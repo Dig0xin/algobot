@@ -18,6 +18,7 @@ class RealTrader(SimulationTrader):
             loadData: bool = True,
             updateData: bool = True,
             isIsolated: bool = False,
+            isSpot: bool = False,
             tld: str = 'com',
             precision: int = 2,
     ):
@@ -40,6 +41,7 @@ class RealTrader(SimulationTrader):
         self.binanceClient = Client(apiKey, apiSecret, tld=tld)
         self.transactionFeePercentage = 0.002  # Added 0.001 for volatility safety.
         self.isolated = isIsolated
+        self.spot = isSpot
 
         symbolInfo = self.binanceClient.get_symbol_info(self.symbol)
         self.purchasePrecision = self.get_purchase_precision(symbolInfo)
@@ -107,6 +109,14 @@ class RealTrader(SimulationTrader):
         except IndexError:  # If not found, it most likely means it is not in the cross margin account.
             return True
 
+    def is_spot(self) -> bool:
+        try:  # Attempt to get coin from regular spot account.
+            assets = self.binanceClient.get_account()['balances']
+            _ = [asset for asset in assets if asset['asset'] == self.coinName][0]
+            return False
+        except IndexError:  # If not found, it most likely means it is not in the cross margin account.
+            return True
+
     def round_down(self, num: float) -> float:
         """
         Rounds down number for trading purposes.
@@ -135,19 +145,29 @@ class RealTrader(SimulationTrader):
         """
         Retrieves margin values and sets them to instance variables.
         """
-        if self.isolated:
+        if self.spot:
+            assets = self.binanceClient.get_account()['balances']
+            coin = [asset for asset in assets if asset['asset'] == self.coinName][0]
+            usdt = [asset for asset in assets if asset['asset'] == 'USDT'][0]
+            self.balance = self.round_down(float(usdt['free']))
+            self.coin = self.round_down(float(coin['free']))
+
+        elif self.isolated:
             assets = self.get_isolated_margin_account()['assets']
             coin = [asset for asset in assets if asset['baseAsset']['asset'] == self.coinName][0]['baseAsset']
             usdt = [asset for asset in assets if asset['baseAsset']['asset'] == self.coinName and
                     asset['quoteAsset']['asset'] == 'USDT'][0]['quoteAsset']
+            self.balance = self.round_down(float(usdt['free']))
+            self.coin = self.round_down(float(coin['free']))
+            self.coinOwed = self.round_down(float(coin['borrowed']))
         else:
             assets = self.binanceClient.get_margin_account()['userAssets']
             coin = [asset for asset in assets if asset['asset'] == self.coinName][0]
             usdt = [asset for asset in assets if asset['asset'] == 'USDT'][0]
+            self.balance = self.round_down(float(usdt['free']))
+            self.coin = self.round_down(float(coin['free']))
+            self.coinOwed = self.round_down(float(coin['borrowed']))
 
-        self.balance = self.round_down(float(usdt['free']))
-        self.coin = self.round_down(float(coin['free']))
-        self.coinOwed = self.round_down(float(coin['borrowed']))
 
     def transfer_spot_to_margin(self):
         """
@@ -174,7 +194,7 @@ class RealTrader(SimulationTrader):
         self.spot_buy_long()
         self.transfer_spot_to_margin()
 
-    def spot_buy_long(self):
+    def spot_buy_long(self, msg: str):
         """
         Enters long position in spot account.
         """
@@ -191,19 +211,27 @@ class RealTrader(SimulationTrader):
                        force=False,
                        orderID=order['clientOrderId'])
 
-    def spot_sell_long(self):
+    def spot_sell_long(self, msg: str):
         """
         Exits long position in spot account.
         """
-        self.spot_coin = self.get_spot_coin()
-        order = self.binanceClient.order_market_sell(
-            symbol=self.symbol,
-            quantity=self.spot_coin
-        )
+        if self.spot:
+            self.spot_coin = self.get_spot_coin()
+            max_sell = self.round_down(self.spot_coin * (1 - self.transactionFeePercentage) / self.currentPrice)
+            order = self.binanceClient.order_market_sell(
+                symbol=self.symbol,
+                quantity=max_sell
+            )
+        else:
+            self.spot_coin = self.get_spot_coin()
+            order = self.binanceClient.order_market_sell(
+                symbol=self.symbol,
+                quantity=self.spot_coin
+            )
 
         self.add_trade(message='Sold spot long.',
-                       force=False,
-                       orderID=order['clientOrderId'])
+                        force=False,
+                        orderID=order['clientOrderId'])
 
     def get_spot_usdt(self) -> float:
         """
@@ -245,6 +273,9 @@ class RealTrader(SimulationTrader):
         if self.isolated:
             assets = self.get_isolated_margin_account()['assets']
             return [asset for asset in assets if asset['baseAsset']['asset'] == targetAsset][0]['baseAsset']
+        elif self.spot:
+            assets = self.binanceClient.get_account()['balances']
+            return [asset for asset in assets if asset['asset'] == targetAsset][0]
         else:
             assets = self.binanceClient.get_margin_account()['userAssets']
             return [asset for asset in assets if asset['asset'] == targetAsset][0]
@@ -300,6 +331,7 @@ class RealTrader(SimulationTrader):
         :param amount: Amount to borrow in margin loan.
         :return: Order dictionary.
         """
+
         if self.isolated:
             self.binanceClient.create_margin_loan(asset=self.coinName,
                                                   amount=amount,
@@ -339,7 +371,7 @@ class RealTrader(SimulationTrader):
 
     def buy_long(self, msg: str, coin: float or None = None, force: bool = False, smartEnter=False):
         """
-        Buys coin at current market price with amount of coin specified. If not specified, assumes bot goes all in.
+        :Buys coin at current market price with amount of coin specified. If not specified, assumes bot goes all in.
         :param smartEnter: Boolean that'll determine whether current position is entered from a smart enter or not.
         :param msg: Message to be used for displaying trade information.
         :param coin: Amount used to enter long position.
@@ -373,6 +405,7 @@ class RealTrader(SimulationTrader):
                            force=force,
                            orderID=order['clientOrderId'],
                            smartEnter=smartEnter)
+
 
     def sell_long(self, msg: str, coin: float or None = None, force: bool = False, stopLossExit=False):
         """
@@ -467,7 +500,7 @@ class RealTrader(SimulationTrader):
         If no coin is provided in function, bot will assume we borrow as much as
         bot can buy with current balance and market value.
         :param smartEnter: Boolean that'll determine whether current position is entered from a smart enter or not.
-        :param msg: Message to be used for displaying trade information.
+        :   param msg: Message to be used for displaying trade information.
         :param coin: Coin amount to sell to enter short position.
         :param force: Boolean that determines whether bot executed action or human.
         """
@@ -503,3 +536,4 @@ class RealTrader(SimulationTrader):
                            force=force,
                            orderID=order['clientOrderId'],
                            smartEnter=smartEnter)
+

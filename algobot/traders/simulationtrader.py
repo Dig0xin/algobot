@@ -16,6 +16,7 @@ class SimulationTrader(Trader):
                  symbol: str = 'BTCUSDT',
                  loadData: bool = True,
                  updateData: bool = True,
+                 isSpot: bool = False,
                  logFile: str = 'simulation',
                  precision: int = 2,
                  addTradeCallback=None):
@@ -45,6 +46,7 @@ class SimulationTrader(Trader):
         self.dailyChangeNets = []  # Daily change net list. Will contain list of all nets.
         self.optionDetails = []  # Current option values. Holds most recent option values.
         self.lowerOptionDetails = []  # Lower option values. Holds lower interval option values (if exist).
+        self.spot = isSpot
 
     def output_message(self, message: str, level: int = 2, printMessage: bool = False):
         """
@@ -229,6 +231,30 @@ class SimulationTrader(Trader):
                             f'Percentage: {round(profitPercentage, 2)}%\n'
                             f'Profit: ${round(profit, self.precision)}\n')
 
+    def spot_buy_long(self, msg: str):
+        """
+        Enters long position in spot account.
+        """
+        pass
+
+    def spot_sell_long(self, msg: str):
+        """
+        Exits long position in spot account.
+        """
+        pass
+
+    def get_spot_usdt(self) -> float:
+        """
+        Returns spot USDT amount.
+        """
+        return self.round_down(self.binanceClient.get_asset_balance(asset='USDT')['free'])
+
+    def get_spot_coin(self) -> float:
+        """
+        Returns spot coin amount.
+        """
+        return self.round_down(self.binanceClient.get_asset_balance(asset=self.coinName)['free'])
+
     def buy_long(self, msg: str, usd: float = None, force: bool = False, smartEnter: bool = False):
         """
         Buys coin at current market price with amount of USD specified. If not specified, assumes bot goes all in.
@@ -394,21 +420,36 @@ class SimulationTrader(Trader):
         :param trend: Current trend the bot registers based on strategies provided.
         """
         if self.customStopLoss is not None and self.currentPrice <= self.customStopLoss:
-            self.sell_long('Sold long because of custom stop loss.')
+            if self.spot:
+                self.spot_sell_long('Sold long because of custom stop loss.')
+            else:
+                self.sell_long('Sold long because of custom stop loss.')
         elif self.get_stop_loss() is not None and self.currentPrice <= self.get_stop_loss():
             if not self.safetyTimer:
-                self.sell_long('Sold long because of stop loss.', stopLossExit=True)
+                if self.spot:
+                    self.spot_sell_long('Sold long because of custom stop loss.', stopLossExit=True)
+                else:
+                    self.sell_long('Sold long because of stop loss.', stopLossExit=True)
             else:
                 if not self.scheduledSafetyTimer:
                     self.scheduledSafetyTimer = time.time() + self.safetyTimer
                 else:
                     if time.time() > self.scheduledSafetyTimer:
-                        self.sell_long('Sold long because of stop loss and safety timer.', stopLossExit=True)
+                        if self.spot:
+                            self.spot_sell_long('Sold long because of stop loss and safety timer.', stopLossExit=True)
+                        else:
+                            self.sell_long('Sold long because of stop loss and safety timer.', stopLossExit=True)
         elif self.get_take_profit() is not None and self.currentPrice >= self.get_take_profit():
-            self.sell_long('Sold long because of take profit.')
+            if self.spot:
+                self.spot_sell_long('Sold long because of take profit.')
+            else:
+                self.sell_long('Sold long because of take profit.')
         elif not self.inHumanControl and trend == BEARISH:
-            self.sell_long('Sold long because a cross was detected.')
-            self.sell_short('Sold short because a cross was detected.')
+            if self.spot:
+                self.spot_sell_long('Sold long because a cross was detected.')
+            else:
+                self.sell_long('Sold long because a cross was detected.')
+                self.sell_short('Sold short because a cross was detected.')
 
     def no_position_logic(self, trend):
         """
@@ -418,22 +459,34 @@ class SimulationTrader(Trader):
         if self.stopLossExit and self.smartStopLossCounter > 0:
             if self.previousPosition == LONG:
                 if self.currentPrice > self.previousStopLoss:
-                    self.buy_long('Reentered long because of smart stop loss.', smartEnter=True)
-                    self.smartStopLossCounter -= 1
+                    if self.spot:
+                        self.spot_buy_long('Reentered long because of smart stop loss.', smartEnter=True)
+                    else:
+                        self.buy_long('Reentered long because of smart stop loss.', smartEnter=True)
+                        self.smartStopLossCounter -= 1
                     return
             elif self.previousPosition == SHORT:
                 if self.currentPrice < self.previousStopLoss:
-                    self.sell_short('Reentered short because of smart stop loss.', smartEnter=True)
-                    self.smartStopLossCounter -= 1
+                    if self.spot:
+                        self.spot_sell_long('Reentered long because of smart stop loss.', smartEnter=True)
+                    else:
+                        self.sell_short('Reentered short because of smart stop loss.', smartEnter=True)
+                        self.smartStopLossCounter -= 1
                     return
 
         if not self.inHumanControl:
             if trend == BULLISH and self.previousPosition != LONG:
-                self.buy_long('Bought long because a bullish trend was detected.')
-                self.reset_smart_stop_loss()
+                if self.spot:
+                    self.spot_buy_long('Bought because a bullish trend was detected.')
+                else:
+                    self.buy_long('Bought long because a bullish trend was detected.')
+                    self.reset_smart_stop_loss()
             elif trend == BEARISH and self.previousPosition != SHORT:
-                self.sell_short('Sold short because a bearish trend was detected.')
-                self.reset_smart_stop_loss()
+                if self.spot:
+                    self.spot_sell_long('Sold  because a bearish trend was detected.')
+                else:
+                    self.sell_short('Sold short because a bearish trend was detected.')
+                    self.reset_smart_stop_loss()
 
     # noinspection PyTypeChecker
     def main_logic(self, log_data: bool = True):

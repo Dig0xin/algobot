@@ -129,6 +129,7 @@ class BotThread(QRunnable):
             apiKey = gui.configuration.binanceApiKey.text()
             tld = 'com' if gui.configuration.otherRegionRadio.isChecked() else 'us'
             isIsolated = gui.configuration.isolatedMarginAccountRadio.isChecked()
+            isSpot = gui.configuration.spotAccountRadio.isChecked()
             self.check_api_credentials(apiKey=apiKey, apiSecret=apiSecret)
             self.signals.activity.emit(caller, f"Retrieving {symbol} data for {prettyInterval.lower()} intervals...")
             gui.trader = RealTrader(apiSecret=apiSecret,
@@ -137,6 +138,7 @@ class BotThread(QRunnable):
                                     symbol=symbol,
                                     tld=tld,
                                     isIsolated=isIsolated,
+                                    isSpot=isSpot,
                                     loadData=True,
                                     updateData=False,
                                     precision=precision)

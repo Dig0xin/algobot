@@ -935,6 +935,7 @@ class Configuration(QDialog):
             'otherRegion': self.otherRegionRadio.isChecked(),
             'isolatedMargin': self.isolatedMarginAccountRadio.isChecked(),
             'crossMargin': self.crossMarginAccountRadio.isChecked(),
+            'spot': self.spotAccountRadio.isChecked(),
             'lowerInterval': self.lowerIntervalCheck.isChecked(),
         }
 
@@ -1025,6 +1026,7 @@ class Configuration(QDialog):
                 self.otherRegionRadio.setChecked(config['otherRegion'])
                 self.isolatedMarginAccountRadio.setChecked(config['isolatedMargin'])
                 self.crossMarginAccountRadio.setChecked(config['crossMargin'])
+                self.spotAccountRadio.setChecked(config['spot'])
                 self.lowerIntervalCheck.setChecked(config['lowerInterval'])
                 self.helper_load(LIVE, config)
                 self.configurationResult.setText(f"Loaded live configuration successfully from {file}.")
