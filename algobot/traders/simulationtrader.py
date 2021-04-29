@@ -10,6 +10,8 @@ from algobot.traders.trader import Trader
 
 
 class SimulationTrader(Trader):
+
+
     def __init__(self,
                  startingBalance: float = 1000,
                  interval: str = '1h',
@@ -17,6 +19,7 @@ class SimulationTrader(Trader):
                  loadData: bool = True,
                  updateData: bool = True,
                  isSpot: bool = False,
+                 inSpot: bool = False,
                  logFile: str = 'simulation',
                  precision: int = 2,
                  addTradeCallback=None):
@@ -47,6 +50,7 @@ class SimulationTrader(Trader):
         self.optionDetails = []  # Current option values. Holds most recent option values.
         self.lowerOptionDetails = []  # Lower option values. Holds lower interval option values (if exist).
         self.spot = isSpot
+        self.inSpot = inSpot
 
     def output_message(self, message: str, level: int = 2, printMessage: bool = False):
         """
@@ -420,34 +424,39 @@ class SimulationTrader(Trader):
         :param trend: Current trend the bot registers based on strategies provided.
         """
         if self.customStopLoss is not None and self.currentPrice <= self.customStopLoss:
-            if self.spot:
+            if self.spot & self.inSpot:
                 self.spot_sell_long('Sold long because of custom stop loss.')
-            else:
+                self.inSpot = False
+            elif ~self.spot:
                 self.sell_long('Sold long because of custom stop loss.')
         elif self.get_stop_loss() is not None and self.currentPrice <= self.get_stop_loss():
             if not self.safetyTimer:
-                if self.spot:
+                if self.spot & self.inSpot:
                     self.spot_sell_long('Sold long because of custom stop loss.', stopLossExit=True)
-                else:
+                    self.inSpot = False
+                elif ~self.spot:
                     self.sell_long('Sold long because of stop loss.', stopLossExit=True)
             else:
                 if not self.scheduledSafetyTimer:
                     self.scheduledSafetyTimer = time.time() + self.safetyTimer
                 else:
                     if time.time() > self.scheduledSafetyTimer:
-                        if self.spot:
+                        if self.spot & self.inSpot:
                             self.spot_sell_long('Sold long because of stop loss and safety timer.', stopLossExit=True)
+                            self.inSpot = False
                         else:
                             self.sell_long('Sold long because of stop loss and safety timer.', stopLossExit=True)
         elif self.get_take_profit() is not None and self.currentPrice >= self.get_take_profit():
-            if self.spot:
+            if self.spot & self.inSpot:
                 self.spot_sell_long('Sold long because of take profit.')
-            else:
+                self.inSpot = False
+            elif ~self.spot:
                 self.sell_long('Sold long because of take profit.')
         elif not self.inHumanControl and trend == BEARISH:
-            if self.spot:
+            if self.spot & self.inSpot:
                 self.spot_sell_long('Sold long because a cross was detected.')
-            else:
+                self.inSpot = False
+            elif ~self.spot:
                 self.sell_long('Sold long because a cross was detected.')
                 self.sell_short('Sold short because a cross was detected.')
 
@@ -459,31 +468,35 @@ class SimulationTrader(Trader):
         if self.stopLossExit and self.smartStopLossCounter > 0:
             if self.previousPosition == LONG:
                 if self.currentPrice > self.previousStopLoss:
-                    if self.spot:
+                    if self.spot & ~self.inSpot:
                         self.spot_buy_long('Reentered long because of smart stop loss.', smartEnter=True)
-                    else:
+                        self.inSpot = True
+                    elif ~self.spot:
                         self.buy_long('Reentered long because of smart stop loss.', smartEnter=True)
                         self.smartStopLossCounter -= 1
                     return
             elif self.previousPosition == SHORT:
                 if self.currentPrice < self.previousStopLoss:
-                    if self.spot:
+                    if self.spot & self.inSpot:
                         self.spot_sell_long('Reentered long because of smart stop loss.', smartEnter=True)
-                    else:
+                        self.inSpot = False
+                    elif ~self.spot:
                         self.sell_short('Reentered short because of smart stop loss.', smartEnter=True)
                         self.smartStopLossCounter -= 1
                     return
 
         if not self.inHumanControl:
             if trend == BULLISH and self.previousPosition != LONG:
-                if self.spot:
+                if self.spot & ~self.inSpot:
                     self.spot_buy_long('Bought because a bullish trend was detected.')
+                    self.inSpot = True
                 else:
                     self.buy_long('Bought long because a bullish trend was detected.')
                     self.reset_smart_stop_loss()
             elif trend == BEARISH and self.previousPosition != SHORT:
-                if self.spot:
+                if self.spot & self.inSpot:
                     self.spot_sell_long('Sold  because a bearish trend was detected.')
+                    self.inSpot = False
                 else:
                     self.sell_short('Sold short because a bearish trend was detected.')
                     self.reset_smart_stop_loss()
@@ -496,8 +509,12 @@ class SimulationTrader(Trader):
         :param log_data: Boolean that will determine where data is logged or not.
         """
         self.trend = trend = self.get_trend(log_data=log_data)
-        if self.currentPosition == SHORT:
-            self.short_position_logic(trend)
+        if self.spot:
+            if self.currentPosition == SHORT:
+                self.long_position_logic(trend)
+        elif ~self.spot:
+            if self.currentPosition == SHORT:
+                self.short_position_logic(trend)
         elif self.currentPosition == LONG:
             self.long_position_logic(trend)
         else:
